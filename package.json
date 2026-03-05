@@ -1,0 +1,28 @@
+{
+  "name": "music-rotation-project",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "ts-node src/index.ts start",
+    "finish": "ts-node src/index.ts finish"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "commander": "^14.0.3",
+    "dotenv": "^17.3.1",
+    "googleapis": "^171.4.0",
+    "open": "^11.0.0",
+    "spotify-web-api-node": "^5.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "@types/open": "^6.1.0",
+    "@types/spotify-web-api-node": "^5.0.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
