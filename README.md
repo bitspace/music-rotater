@@ -2,6 +2,8 @@
 
 This project automates a music listening workflow using Google Sheets and Spotify. It allows you to maintain an "intake" list of artists in a Google Sheet, randomly select one to listen to, automatically generate a chronological Spotify playlist of their entire catalog, and track your progress in a "wip/done" tab.
 
+This project was hammered out in a few minutes of attention with mostly Gemini CLI. I started with the [PLAN.md](PLAN.md) file in Claude Code in an interactive jam/brainstorm session. I then just dropped that into a new folder, fired up Gemini CLI, and said "follow the plan". Not even the usual `GEMINI.md` or `AGENTS.md`.
+
 ## Features
 
 - **Random Artist Selection:** Picks a random artist from your "intake" queue in Google Sheets.
