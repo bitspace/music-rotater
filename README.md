@@ -9,6 +9,7 @@ Gemini fucked up its first pass, though; it used commonjs instead of ESM. I ran 
 ## Features
 
 - **Random Artist Selection:** Picks a random artist from your "intake" queue in Google Sheets.
+- **Queue Management:** Add a new artist to the `intake` tab and keep the queue alphabetized automatically.
 - **Automated Tracking:** Moves selected artists to a "wip/done" tab and records the "Listen Start Date".
 - **Chronological Playlists:** Automatically searches Spotify for the chosen artist, retrieves all of their albums and singles, sorts them by release date, and creates a private, chronological playlist on your Spotify account.
 - **Completion Logging:** Easily log the "Listen End Date" for your current artist when you've finished their catalog.
@@ -57,7 +58,7 @@ Before running the project, you need to set up credentials for both Google Cloud
 
 ## Usage
 
-The project provides two main commands: `start` and `finish`.
+The project provides three main commands: `start`, `finish`, and `new`.
 
 ### 1. Start a New Artist
 
@@ -83,6 +84,17 @@ npm run finish
 2. Finds the most recently started artist that does not yet have a "Listen End Date".
 3. Updates that row by adding today's date to the "Listen End Date" column.
 4. **Output:** Confirms which artist was marked as finished.
+
+### 3. Add a New Artist to Intake
+
+```bash
+npm run new "Artist Name" "Artist Genre"
+```
+
+**What it does:**
+1. Adds the artist and genre to the `intake` tab in your Google Sheet.
+2. Re-sorts the `intake` queue lexicographically by artist name.
+3. **Output:** Confirms which artist was added.
 
 ## Google Sheet Structure
 

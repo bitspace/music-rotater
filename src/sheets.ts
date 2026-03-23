@@ -25,6 +25,48 @@ export interface Artist {
   name: string;
   genre: string;
 }
+function compareArtistNames(a: unknown, b: unknown): number {
+  return String(a ?? '').localeCompare(String(b ?? ''), undefined, { sensitivity: 'base' });
+}
+
+function sortRowsByArtistName<T extends unknown[]>(rows: T[]): T[] {
+  return rows.sort((a, b) => compareArtistNames(a[0], b[0]));
+}
+
+export async function addArtistToIntake(name: string, genre: string): Promise<Artist> {
+  const normalizedName = name.trim();
+  const normalizedGenre = genre.trim();
+
+  if (!normalizedName) {
+    throw new Error('Artist name cannot be empty.');
+  }
+
+  const sheets = await getSheetsClient();
+  const intakeResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'intake!A2:B',
+  });
+
+  const intakeRows = intakeResponse.data.values || [];
+  intakeRows.push([normalizedName, normalizedGenre]);
+  sortRowsByArtistName(intakeRows);
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId,
+    range: 'intake!A2:B',
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: 'intake!A2',
+    valueInputOption: 'RAW',
+    requestBody: {
+      values: intakeRows,
+    },
+  });
+
+  return { name: normalizedName, genre: normalizedGenre };
+}
 
 export async function startArtist(): Promise<Artist | null> {
   const sheets = await getSheetsClient();
@@ -42,7 +84,12 @@ export async function startArtist(): Promise<Artist | null> {
 
   // 2. Pick a random row
   const randomIndex = Math.floor(Math.random() * rows.length);
-  const [name, genre] = rows[randomIndex];
+  const selectedRow = rows[randomIndex];
+  if (!selectedRow) {
+    return null;
+  }
+  const name = String(selectedRow[0] ?? '');
+  const genre = String(selectedRow[1] ?? '');
   
   // 3. Remove from "intake"
   // Note: Values.clear doesn't shift rows up. We have to re-upload the entire list or delete the row.
@@ -81,11 +128,7 @@ export async function startArtist(): Promise<Artist | null> {
   wipRows.push(newRow);
 
   // Sort alphabetically by artist name (column A, index 0)
-  wipRows.sort((a, b) => {
-    const nameA = String(a[0] || '').toLowerCase();
-    const nameB = String(b[0] || '').toLowerCase();
-    return nameA.localeCompare(nameB);
-  });
+  sortRowsByArtistName(wipRows);
 
   // Clear existing values and overwrite with sorted array
   await sheets.spreadsheets.values.clear({
@@ -126,8 +169,12 @@ export async function finishArtist(): Promise<string | null> {
   let latestDate = new Date(0);
 
   for (let i = 0; i < rows.length; i++) {
-    const startDateStr = rows[i][2];
-    const endDateStr = rows[i][3];
+    const row = rows[i];
+    if (!row) {
+      continue;
+    }
+    const startDateStr = row[2];
+    const endDateStr = row[3];
 
     if (startDateStr && !endDateStr) {
       const startDate = new Date(startDateStr);
@@ -145,7 +192,12 @@ export async function finishArtist(): Promise<string | null> {
     return null;
   }
 
-  const artistName = rows[targetRowIndex][0];
+  const targetRow = rows[targetRowIndex];
+  if (!targetRow) {
+    return null;
+  }
+
+  const artistName = String(targetRow[0] ?? '');
   const today = new Date().toLocaleDateString();
 
   // 3. Update the row with today's date in column D (index 3)

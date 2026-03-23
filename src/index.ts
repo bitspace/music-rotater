@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import dotenv from 'dotenv';
-import { startArtist, finishArtist } from './sheets.ts';
+import { startArtist, finishArtist, addArtistToIntake } from './sheets.ts';
 import { createPlaylistForArtist } from './spotify.ts';
 
 // Load environment variables
@@ -32,6 +32,7 @@ program
       console.log(`Success! Playlist created: ${playlistUrl}`);
     } catch (error) {
       console.error('Error starting artist:', error);
+      process.exitCode = 1;
     }
   });
 
@@ -49,7 +50,21 @@ program
       }
     } catch (error) {
       console.error('Error finishing artist:', error);
+      process.exitCode = 1;
     }
   });
 
+program
+  .command('new <artistName> <artistGenre>')
+  .description('Add a new artist to the intake queue in alphabetical order')
+  .action(async (artistName: string, artistGenre: string) => {
+    try {
+      console.log(`Adding ${artistName} to the intake queue...`);
+      const artist = await addArtistToIntake(artistName, artistGenre);
+      console.log(`Added ${artist.name} (${artist.genre || 'No genre'}) to intake in alphabetical order.`);
+    } catch (error) {
+      console.error('Error adding artist to intake:', error);
+      process.exitCode = 1;
+    }
+  });
 program.parse();
