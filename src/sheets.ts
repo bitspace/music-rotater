@@ -29,8 +29,34 @@ function compareArtistNames(a: unknown, b: unknown): number {
   return String(a ?? '').localeCompare(String(b ?? ''), undefined, { sensitivity: 'base' });
 }
 
+function artistNamesMatch(a: unknown, b: unknown): boolean {
+  return compareArtistNames(a, b) === 0;
+}
+
 function sortRowsByArtistName<T extends unknown[]>(rows: T[]): T[] {
   return rows.sort((a, b) => compareArtistNames(a[0], b[0]));
+}
+
+/**
+ * Case/diacritic-insensitive scan of both workbook tabs for an existing artist name.
+ * Returns the first location found, or null if the artist is absent from both sheets.
+ */
+function findExistingArtistLocation(
+  intakeRows: unknown[][],
+  wipRows: unknown[][],
+  artistName: string,
+): 'intake' | 'wip/done' | null {
+  for (const row of intakeRows) {
+    if (artistNamesMatch(row?.[0], artistName)) {
+      return 'intake';
+    }
+  }
+  for (const row of wipRows) {
+    if (artistNamesMatch(row?.[0], artistName)) {
+      return 'wip/done';
+    }
+  }
+  return null;
 }
 
 export async function addArtistToIntake(name: string, genre: string): Promise<Artist> {
@@ -42,12 +68,29 @@ export async function addArtistToIntake(name: string, genre: string): Promise<Ar
   }
 
   const sheets = await getSheetsClient();
-  const intakeResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'intake!A2:B',
-  });
+
+  // Dedupe across the whole workbook: refuse if the artist is already on either sheet.
+  const [intakeResponse, wipResponse] = await Promise.all([
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'intake!A2:B',
+    }),
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'wip/done!A2:A',
+    }),
+  ]);
 
   const intakeRows = intakeResponse.data.values || [];
+  const wipRows = wipResponse.data.values || [];
+  const existingLocation = findExistingArtistLocation(intakeRows, wipRows, normalizedName);
+
+  if (existingLocation) {
+    throw new Error(
+      `Artist "${normalizedName}" already exists in the "${existingLocation}" sheet. Not adding a duplicate.`,
+    );
+  }
+
   intakeRows.push([normalizedName, normalizedGenre]);
   sortRowsByArtistName(intakeRows);
 

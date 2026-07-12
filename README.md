@@ -92,9 +92,10 @@ npm run new "Artist Name" "Artist Genre"
 ```
 
 **What it does:**
-1. Adds the artist and genre to the `intake` tab in your Google Sheet.
-2. Re-sorts the `intake` queue lexicographically by artist name.
-3. **Output:** Confirms which artist was added.
+1. Searches both the `intake` and `wip/done` tabs for an existing row with the same artist name (case-insensitive).
+2. If a match is found on either tab, the command refuses to add a duplicate and exits with an error.
+3. Otherwise, adds the artist and genre to the `intake` tab and re-sorts the queue lexicographically by artist name.
+4. **Output:** Confirms which artist was added, or reports that the artist already exists and where.
 
 ## Google Sheet Structure
 

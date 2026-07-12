@@ -56,10 +56,12 @@ program
 
 program
   .command('new <artistName> <artistGenre>')
-  .description('Add a new artist to the intake queue in alphabetical order')
+  .description(
+    'Add a new artist to the intake queue in alphabetical order (skips if already on intake or wip/done)',
+  )
   .action(async (artistName: string, artistGenre: string) => {
     try {
-      console.log(`Adding ${artistName} to the intake queue...`);
+      console.log(`Checking workbook for ${artistName}, then adding to intake if new...`);
       const artist = await addArtistToIntake(artistName, artistGenre);
       console.log(`Added ${artist.name} (${artist.genre || 'No genre'}) to intake in alphabetical order.`);
     } catch (error) {
