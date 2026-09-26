@@ -78,9 +78,20 @@ async function startFlow(options: { rebuild?: boolean } = {}): Promise<{ name: s
   if (existing && options.rebuild) {
     // Retire the old playlist only after the new one is built AND linked in
     // the sheet — a failure anywhere above must never strand the artist with
-    // no working playlist.
-    await retirePlaylist(existing.uri);
-    console.log(`Retired old playlist: ${existing.url}`);
+    // no working playlist. Retirement itself is best-effort: the new playlist
+    // is already live, so a failure here (e.g. transient Spotify error) must
+    // not fail the run and invite a retry that would build yet another
+    // playlist.
+    try {
+      await retirePlaylist(existing.uri);
+      console.log(`Retired old playlist: ${existing.url}`);
+    } catch (err) {
+      console.warn(
+        `Warning: could not retire old playlist ${existing.url}: ${
+          err instanceof Error ? err.message : String(err)
+        } — the new playlist is live; retire the old one manually when convenient.`,
+      );
+    }
   }
   clearRotationState();
   return { name: artist.name, url, uri };
