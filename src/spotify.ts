@@ -212,7 +212,7 @@ export async function createPlaylistForArtist(artistName: string): Promise<Gener
   console.log(`Adding ${allTrackUris.length} tracks to the playlist...`);
   for (let i = 0; i < allTrackUris.length; i += 100) {
     const batch = allTrackUris.slice(i, i + 100);
-    const response = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/items`, {
+    const response = await fetch(`https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/items`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${spotifyApi.getAccessToken()}`,
@@ -368,10 +368,26 @@ export async function getPlaylistTracks(playlistUri: string): Promise<PlaylistTr
   let offset = 0;
   const limit = 100;
   for (;;) {
-    const res = await spotifyApi.getPlaylistTracks(playlistId, { limit, offset });
-    const items = res.body.items ?? [];
-    for (const item of items) {
-      const t: any = (item as any).track;
+    // NOTE: spotify-web-api-node's getPlaylistTracks() still calls the legacy
+    // /playlists/{id}/tracks path, which Spotify's Feb 2026 migration turned
+    // into a bare 403 for Development Mode apps. /items is the replacement;
+    // entry field renamed track -> item.
+    // See: https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    const response = await fetch(
+      `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/items?${params}`,
+      { headers: { Authorization: `Bearer ${spotifyApi.getAccessToken()}` } },
+    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Failed to fetch playlist items: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+    const body = (await response.json()) as any;
+    const items: any[] = body.items ?? [];
+    for (const entry of items) {
+      const t: any = entry.item ?? entry.track;
       if (!t || !t.uri) {
         continue;
       }
@@ -382,7 +398,7 @@ export async function getPlaylistTracks(playlistUri: string): Promise<PlaylistTr
         durationMs: t.duration_ms ?? 0,
       });
     }
-    if (!res.body.next) {
+    if (!body.next) {
       break;
     }
     offset += items.length;
