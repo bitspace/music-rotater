@@ -23,6 +23,7 @@ import {
   getDevices,
   getPlaylistTracks,
   findPlaylistForArtist,
+  retirePlaylist,
 } from './spotify.ts';
 import { loadRotationState, saveRotationState, clearRotationState } from './state.ts';
 
@@ -44,7 +45,7 @@ function formatMs(ms: number): string {
 }
 
 /** Shared flow: pick a random artist, move it to wip/done, build its playlist, link it. */
-async function startFlow(): Promise<{ name: string; url: string; uri: string } | null> {
+async function startFlow(options: { rebuild?: boolean } = {}): Promise<{ name: string; url: string; uri: string } | null> {
   console.log('Fetching a random artist from Google Sheets...');
   const artist = await startArtist();
   if (!artist) {
@@ -54,10 +55,31 @@ async function startFlow(): Promise<{ name: string; url: string; uri: string } |
   console.log(`Selected: ${artist.name} (${artist.genre || 'No genre'})`);
   console.log(`Moved ${artist.name} to wip/done with today's start date.`);
 
-  console.log(`Generating chronological Spotify playlist for ${artist.name}...`);
-  const { url, uri } = await createPlaylistForArtist(artist.name);
+  // Reuse the existing chronological playlist when there is one — otherwise
+  // every start silently mints a duplicate playlist in the user's library.
+  // --rebuild forces a fresh build and retires the old playlist.
+  const existing = await findPlaylistForArtist(artist.name);
+  let url: string;
+  let uri: string;
+  if (existing && !options.rebuild) {
+    ({ url, uri } = existing);
+    console.log(`Reusing existing playlist: ${url}`);
+  } else {
+    if (existing) {
+      console.log(`Rebuilding playlist for ${artist.name} (the old one will be retired)...`);
+    } else {
+      console.log(`Generating chronological Spotify playlist for ${artist.name}...`);
+    }
+    ({ url, uri } = await createPlaylistForArtist(artist.name));
+    console.log(`Success! Playlist created: ${url}`);
+    if (existing) {
+      // Only retire the old playlist after the new one is built and about to
+      // be linked — a failed build must never strand the artist with nothing.
+      await retirePlaylist(existing.uri);
+      console.log(`Retired old playlist: ${existing.url}`);
+    }
+  }
   await setCurrentArtistPlaylist(uri, url);
-  console.log(`Success! Playlist created: ${url}`);
   console.log('Playlist linked in the wip/done Notes column.');
   clearRotationState();
   return { name: artist.name, url, uri };
@@ -118,9 +140,10 @@ function finalTrackPlayedThrough(progressMs: number, durationMs: number): boolea
 program
   .command('start')
   .description('Start listening to a new random artist from the intake queue')
-  .action(async () => {
+  .option('--rebuild', 'build a fresh playlist even if one already exists (retires the old one)')
+  .action(async (options: { rebuild?: boolean }) => {
     try {
-      await startFlow();
+      await startFlow(options);
     } catch (error) {
       console.error('Error starting artist:', error);
       process.exitCode = 1;
@@ -304,7 +327,8 @@ deviceOption(program.command('resume').description('Resume playback')).action(
 program
   .command('rollover')
   .description('Finish the current artist and immediately start the next one')
-  .action(async () => {
+  .option('--rebuild', 'build a fresh playlist for the next artist even if one already exists (retires the old one)')
+  .action(async (options: { rebuild?: boolean }) => {
     try {
       const done = await finishArtist();
       if (done) {
@@ -313,7 +337,7 @@ program
         console.log('No unfinished artist to finish — just starting the next one.');
       }
       clearRotationState();
-      await startFlow();
+      await startFlow(options);
     } catch (error) {
       console.error('Error during rollover:', error);
       process.exitCode = 1;
