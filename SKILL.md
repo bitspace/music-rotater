@@ -73,7 +73,7 @@ Watcher:
    listening. Confirm first unless the user asked for the action.
 4. On a Spotify 403, diagnose before re-authenticating: `Insufficient client scope`
    means the scope list changed (delete `.spotify_token.json` and re-run); a bare
-   a bare `Forbidden` on playlist reads is Spotify platform gating, not auth — the
+   `Forbidden` on playlist reads is Spotify platform gating, not auth — the
    Feb 2026 migration renamed `GET /playlists/{id}/tracks` to `/playlists/{id}/items`
    (https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide).
 5. `.env`, the Google credentials JSON, and `.spotify_token.json` are secrets: never
