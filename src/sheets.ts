@@ -25,6 +25,62 @@ export interface Artist {
   name: string;
   genre: string;
 }
+
+/** An artist currently in progress on the wip/done tab (has a start date, no end date). */
+export interface WipArtist {
+  name: string;
+  genre: string;
+  startDate: string;
+  /** Spotify playlist URI linked in the Notes column (null for rows created before linking). */
+  playlistUri: string | null;
+  playlistUrl: string | null;
+  /** 1-based row number in the wip/done sheet (header is row 1). */
+  rowNumber: number;
+}
+
+const PLAYLIST_URI_PATTERN = /spotify:playlist:[A-Za-z0-9]+/;
+const PLAYLIST_URL_PATTERN = /https:\/\/open\.spotify\.com\/playlist\/[A-Za-z0-9]+/;
+
+function parsePlaylistFromNotes(notes: unknown): { uri: string | null; url: string | null } {
+  const text = String(notes ?? '');
+  const uriMatch = text.match(PLAYLIST_URI_PATTERN);
+  const urlMatch = text.match(PLAYLIST_URL_PATTERN);
+  return {
+    uri: uriMatch ? uriMatch[0] : null,
+    url: urlMatch ? urlMatch[0] : null,
+  };
+}
+
+/**
+ * Shared scan of wip/done rows: index of the unfinished row (has a Listen Start
+ * Date but no Listen End Date, most recent start wins), or -1 when none exists.
+ */
+function findUnfinishedRowIndex(rows: unknown[][]): number {
+  let targetRowIndex = -1;
+  let latestDate = new Date(0);
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row) {
+      continue;
+    }
+    const startDateStr = row[2];
+    const endDateStr = row[3];
+
+    if (startDateStr && !endDateStr) {
+      const startDate = new Date(String(startDateStr));
+      // Fallback in case date parsing fails or is invalid
+      if (isNaN(startDate.getTime())) {
+        if (targetRowIndex === -1) targetRowIndex = i; // just take the first one we see
+      } else if (startDate >= latestDate) {
+        latestDate = startDate;
+        targetRowIndex = i;
+      }
+    }
+  }
+
+  return targetRowIndex;
+}
 function compareArtistNames(a: unknown, b: unknown): number {
   return String(a ?? '').localeCompare(String(b ?? ''), undefined, { sensitivity: 'base' });
 }
@@ -208,28 +264,7 @@ export async function finishArtist(): Promise<string | null> {
   }
 
   // 2. Find the row with the most recent Listen Start Date that has no Listen End Date
-  let targetRowIndex = -1;
-  let latestDate = new Date(0);
-
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row) {
-      continue;
-    }
-    const startDateStr = row[2];
-    const endDateStr = row[3];
-
-    if (startDateStr && !endDateStr) {
-      const startDate = new Date(startDateStr);
-      // Fallback in case date parsing fails or is invalid
-      if (isNaN(startDate.getTime())) {
-        if (targetRowIndex === -1) targetRowIndex = i; // just take the first one we see
-      } else if (startDate >= latestDate) {
-        latestDate = startDate;
-        targetRowIndex = i;
-      }
-    }
-  }
+  const targetRowIndex = findUnfinishedRowIndex(rows);
 
   if (targetRowIndex === -1) {
     return null;
@@ -245,7 +280,7 @@ export async function finishArtist(): Promise<string | null> {
 
   // 3. Update the row with today's date in column D (index 3)
   // Sheets API rows are 1-based, and we skipped header, so row starts at index 2.
-  const sheetRowNumber = targetRowIndex + 2; 
+  const sheetRowNumber = targetRowIndex + 2;
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `wip/done!D${sheetRowNumber}`,
@@ -256,4 +291,69 @@ export async function finishArtist(): Promise<string | null> {
   });
 
   return artistName;
+}
+
+/**
+ * Return the currently in-progress artist (start date set, no end date),
+ * including the playlist URI/URL parsed out of the Notes column.
+ */
+export async function getCurrentArtist(): Promise<WipArtist | null> {
+  const sheets = await getSheetsClient();
+
+  const wipResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'wip/done!A2:E',
+  });
+
+  const rows = wipResponse.data.values;
+  if (!rows || rows.length === 0) {
+    return null;
+  }
+
+  const targetRowIndex = findUnfinishedRowIndex(rows);
+  if (targetRowIndex === -1) {
+    return null;
+  }
+
+  const row = rows[targetRowIndex];
+  if (!row) {
+    return null;
+  }
+
+  const { uri, url } = parsePlaylistFromNotes(row[4]);
+
+  return {
+    name: String(row[0] ?? ''),
+    genre: String(row[1] ?? ''),
+    startDate: String(row[2] ?? ''),
+    playlistUri: uri,
+    playlistUrl: url,
+    rowNumber: targetRowIndex + 2,
+  };
+}
+
+/**
+ * Record the generated playlist in the Notes column (E) of the current
+ * in-progress artist row. This is what links a wip/done row to its Spotify
+ * playlist for the play/status/watch commands.
+ */
+export async function setCurrentArtistPlaylist(
+  playlistUri: string,
+  playlistUrl: string,
+): Promise<void> {
+  const sheets = await getSheetsClient();
+  const current = await getCurrentArtist();
+  if (!current) {
+    throw new Error('No unfinished artist in wip/done to link a playlist to.');
+  }
+
+  const notes = `Playlist: ${playlistUrl} (${playlistUri})`;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `wip/done!E${current.rowNumber}`,
+    valueInputOption: 'RAW',
+    requestBody: {
+      values: [[notes]],
+    },
+  });
 }

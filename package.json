@@ -6,7 +6,16 @@
   "scripts": {
     "start": "ts-node src/index.ts start",
     "finish": "ts-node src/index.ts finish",
-    "new": "ts-node src/index.ts new"
+    "new": "ts-node src/index.ts new",
+    "play": "ts-node src/index.ts play",
+    "status": "ts-node src/index.ts status",
+    "devices": "ts-node src/index.ts devices",
+    "next": "ts-node src/index.ts next",
+    "prev": "ts-node src/index.ts prev",
+    "pause": "ts-node src/index.ts pause",
+    "resume": "ts-node src/index.ts resume",
+    "rollover": "ts-node src/index.ts rollover",
+    "watch": "ts-node src/index.ts watch"
   },
   "keywords": [],
   "author": "",

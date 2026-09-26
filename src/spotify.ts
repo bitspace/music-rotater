@@ -15,7 +15,13 @@ const spotifyApi = new SpotifyWebApi({
   redirectUri: process.env.SPOTIFY_REDIRECT_URI,
 });
 
-const SCOPES = ['playlist-modify-public', 'playlist-modify-private'];
+const SCOPES = [
+  'playlist-modify-public',
+  'playlist-modify-private',
+  // Playback control (play/status/next/pause/watch commands)
+  'user-read-playback-state',
+  'user-modify-playback-state',
+];
 
 /**
  * Perform OAuth 2.0 flow to authenticate the user.
@@ -24,25 +30,34 @@ async function authenticate(): Promise<void> {
   // Check if we already have saved tokens
   if (fs.existsSync(TOKEN_PATH)) {
     const tokens = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf-8'));
-    spotifyApi.setAccessToken(tokens.access_token);
-    spotifyApi.setRefreshToken(tokens.refresh_token);
+    const savedScopes: string[] = Array.isArray(tokens.scopes) ? tokens.scopes : [];
+    const scopesMatch =
+      savedScopes.length === SCOPES.length && SCOPES.every((s) => savedScopes.includes(s));
 
-    // Try refreshing the token to see if it's still valid
-    try {
-      const data = await spotifyApi.refreshAccessToken();
-      const access_token = data.body['access_token'];
-      spotifyApi.setAccessToken(access_token);
+    if (scopesMatch) {
+      spotifyApi.setAccessToken(tokens.access_token);
+      spotifyApi.setRefreshToken(tokens.refresh_token);
 
-      // Save the updated access token (and refresh token if it changed)
-      const updatedTokens = {
-        ...tokens,
-        access_token: access_token,
-        refresh_token: data.body['refresh_token'] || tokens.refresh_token,
-      };
-      fs.writeFileSync(TOKEN_PATH, JSON.stringify(updatedTokens));
-      return;
-    } catch (err) {
-      console.log('Saved token is invalid or expired. Re-authenticating...');
+      // Try refreshing the token to see if it's still valid
+      try {
+        const data = await spotifyApi.refreshAccessToken();
+        const access_token = data.body['access_token'];
+        spotifyApi.setAccessToken(access_token);
+
+        // Save the updated access token (and refresh token if it changed)
+        const updatedTokens = {
+          ...tokens,
+          access_token: access_token,
+          refresh_token: data.body['refresh_token'] || tokens.refresh_token,
+          scopes: SCOPES,
+        };
+        fs.writeFileSync(TOKEN_PATH, JSON.stringify(updatedTokens));
+        return;
+      } catch (err) {
+        console.log('Saved token is invalid or expired. Re-authenticating...');
+      }
+    } else {
+      console.log('Spotify permissions changed — re-authenticating to pick up new scopes...');
     }
   }
 
@@ -62,7 +77,10 @@ async function authenticate(): Promise<void> {
             spotifyApi.setRefreshToken(refresh_token);
 
             // Save tokens for future runs
-            fs.writeFileSync(TOKEN_PATH, JSON.stringify({ access_token, refresh_token }));
+            fs.writeFileSync(
+              TOKEN_PATH,
+              JSON.stringify({ access_token, refresh_token, scopes: SCOPES }),
+            );
 
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end('<h1>Authentication successful!</h1><p>You can close this tab and return to the terminal.</p>');
@@ -100,7 +118,12 @@ async function authenticate(): Promise<void> {
   });
 }
 
-export async function createPlaylistForArtist(artistName: string): Promise<string> {
+export interface GeneratedPlaylist {
+  url: string;
+  uri: string;
+}
+
+export async function createPlaylistForArtist(artistName: string): Promise<GeneratedPlaylist> {
   // 1. Authenticate with Spotify
   await authenticate();
 
@@ -153,6 +176,7 @@ export async function createPlaylistForArtist(artistName: string): Promise<strin
   });
   const playlistId = playlistResponse.body.id;
   const playlistUrl = playlistResponse.body.external_urls.spotify;
+  const playlistUri = playlistResponse.body.uri;
 
   // 6. Fetch tracks for each album and add them to the playlist
   console.log(`Fetching tracks for ${sortedAlbums.length} releases...`);
@@ -200,5 +224,189 @@ export async function createPlaylistForArtist(artistName: string): Promise<strin
     }
   }
 
-  return playlistUrl;
+  return { url: playlistUrl, uri: playlistUri };
+}
+
+// ---------------------------------------------------------------------------
+// Playback control
+// ---------------------------------------------------------------------------
+
+export interface DeviceInfo {
+  id: string;
+  name: string;
+  isActive: boolean;
+  type: string;
+}
+
+export interface NowPlaying {
+  isPlaying: boolean;
+  trackName: string;
+  artists: string;
+  trackUri: string;
+  progressMs: number;
+  durationMs: number;
+  /** Spotify context URI (playlist/album/artist) playback started from, if any. */
+  contextUri: string | null;
+  deviceName: string;
+}
+
+export interface PlaylistTrack {
+  uri: string;
+  name: string;
+  artists: string;
+  durationMs: number;
+}
+
+export async function getDevices(): Promise<DeviceInfo[]> {
+  await authenticate();
+  const res = await spotifyApi.getMyDevices();
+  return (res.body.devices ?? []).map((d) => ({
+    id: d.id ?? '',
+    name: d.name ?? 'unknown device',
+    isActive: d.is_active ?? false,
+    type: d.type ?? '',
+  }));
+}
+
+/**
+ * Pick a device to control: the explicit id, the active device, or the first
+ * available one (Spotify will try to wake an inactive device on play).
+ */
+export async function resolveDevice(deviceId?: string): Promise<DeviceInfo> {
+  const devices = await getDevices();
+  if (deviceId) {
+    const found = devices.find((d) => d.id === deviceId);
+    if (!found) {
+      throw new Error(`Device "${deviceId}" not found. Run "devices" to list available devices.`);
+    }
+    return found;
+  }
+  const active = devices.find((d) => d.isActive);
+  if (active) {
+    return active;
+  }
+  const first = devices[0];
+  if (first) {
+    return first;
+  }
+  throw new Error(
+    'No Spotify devices found. Open Spotify on your phone or computer first, then try again.',
+  );
+}
+
+export async function getNowPlaying(): Promise<NowPlaying | null> {
+  await authenticate();
+  let body: any;
+  try {
+    const res = await spotifyApi.getMyCurrentPlaybackState();
+    body = res.body;
+  } catch {
+    return null;
+  }
+  if (!body || !body.item) {
+    return null;
+  }
+  return {
+    isPlaying: body.is_playing ?? false,
+    trackName: body.item.name ?? 'unknown track',
+    artists: (body.item.artists ?? []).map((a: any) => a.name).join(', '),
+    trackUri: body.item.uri ?? '',
+    progressMs: body.progress_ms ?? 0,
+    durationMs: body.item.duration_ms ?? 0,
+    contextUri: body.context ? (body.context.uri ?? null) : null,
+    deviceName: body.device ? (body.device.name ?? 'unknown device') : 'unknown device',
+  };
+}
+
+/** Start (or restart) playback of a playlist on the given device. */
+export async function playPlaylist(playlistUri: string, deviceId?: string): Promise<DeviceInfo> {
+  await authenticate();
+  const device = await resolveDevice(deviceId);
+  await spotifyApi.play({ device_id: device.id, context_uri: playlistUri });
+  return device;
+}
+
+export async function pausePlayback(deviceId?: string): Promise<DeviceInfo> {
+  await authenticate();
+  const device = await resolveDevice(deviceId);
+  await spotifyApi.pause({ device_id: device.id });
+  return device;
+}
+
+export async function resumePlayback(deviceId?: string): Promise<DeviceInfo> {
+  await authenticate();
+  const device = await resolveDevice(deviceId);
+  await spotifyApi.play({ device_id: device.id });
+  return device;
+}
+
+export async function nextTrack(deviceId?: string): Promise<DeviceInfo> {
+  await authenticate();
+  const device = await resolveDevice(deviceId);
+  await spotifyApi.skipToNext({ device_id: device.id });
+  return device;
+}
+
+export async function previousTrack(deviceId?: string): Promise<DeviceInfo> {
+  await authenticate();
+  const device = await resolveDevice(deviceId);
+  await spotifyApi.skipToPrevious({ device_id: device.id });
+  return device;
+}
+
+/** All playable tracks of a playlist, in order (skips local/unavailable entries). */
+export async function getPlaylistTracks(playlistUri: string): Promise<PlaylistTrack[]> {
+  await authenticate();
+  const playlistId = playlistUri.split(':').pop() ?? '';
+  const tracks: PlaylistTrack[] = [];
+  let offset = 0;
+  const limit = 100;
+  for (;;) {
+    const res = await spotifyApi.getPlaylistTracks(playlistId, { limit, offset });
+    const items = res.body.items ?? [];
+    for (const item of items) {
+      const t: any = (item as any).track;
+      if (!t || !t.uri) {
+        continue;
+      }
+      tracks.push({
+        uri: t.uri,
+        name: t.name ?? 'unknown track',
+        artists: (t.artists ?? []).map((a: any) => a.name).join(', '),
+        durationMs: t.duration_ms ?? 0,
+      });
+    }
+    if (!res.body.next) {
+      break;
+    }
+    offset += items.length;
+  }
+  return tracks;
+}
+
+/**
+ * Find this project's chronological playlist for an artist ("<name> - Chronological")
+ * in the user's library. Used to backfill the sheet link for rows created
+ * before playlist URIs were recorded in Notes.
+ */
+export async function findPlaylistForArtist(
+  artistName: string,
+): Promise<GeneratedPlaylist | null> {
+  await authenticate();
+  const wanted = `${artistName} - Chronological`.toLowerCase();
+  let offset = 0;
+  for (;;) {
+    const res = await spotifyApi.getUserPlaylists({ limit: 50, offset });
+    const items = res.body.items ?? [];
+    for (const p of items) {
+      if (p.name && p.name.toLowerCase() === wanted) {
+        return { url: p.external_urls.spotify, uri: p.uri };
+      }
+    }
+    if (!res.body.next) {
+      break;
+    }
+    offset += items.length;
+  }
+  return null;
 }

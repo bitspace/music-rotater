@@ -1,7 +1,30 @@
 import { Command } from 'commander';
 import dotenv from 'dotenv';
-import { startArtist, finishArtist, addArtistToIntake } from './sheets.ts';
-import { createPlaylistForArtist } from './spotify.ts';
+import { execSync } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import {
+  startArtist,
+  finishArtist,
+  addArtistToIntake,
+  getCurrentArtist,
+  setCurrentArtistPlaylist,
+  type WipArtist,
+} from './sheets.ts';
+import {
+  createPlaylistForArtist,
+  playPlaylist,
+  pausePlayback,
+  resumePlayback,
+  nextTrack,
+  previousTrack,
+  getNowPlaying,
+  getDevices,
+  getPlaylistTracks,
+  findPlaylistForArtist,
+} from './spotify.ts';
+import { loadRotationState, saveRotationState, clearRotationState } from './state.ts';
 
 // Load environment variables
 dotenv.config();
@@ -13,23 +36,75 @@ program
   .description('Automate music listening workflow with Google Sheets and Spotify')
   .version('1.0.0');
 
+function formatMs(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+/** Shared flow: pick a random artist, move it to wip/done, build its playlist, link it. */
+async function startFlow(): Promise<{ name: string; url: string; uri: string } | null> {
+  console.log('Fetching a random artist from Google Sheets...');
+  const artist = await startArtist();
+  if (!artist) {
+    console.log('No artists left in the intake queue!');
+    return null;
+  }
+  console.log(`Selected: ${artist.name} (${artist.genre || 'No genre'})`);
+  console.log(`Moved ${artist.name} to wip/done with today's start date.`);
+
+  console.log(`Generating chronological Spotify playlist for ${artist.name}...`);
+  const { url, uri } = await createPlaylistForArtist(artist.name);
+  await setCurrentArtistPlaylist(uri, url);
+  console.log(`Success! Playlist created: ${url}`);
+  console.log('Playlist linked in the wip/done Notes column.');
+  clearRotationState();
+  return { name: artist.name, url, uri };
+}
+
+/**
+ * Resolve the current artist's playlist URI, backfilling the sheet link from
+ * the user's Spotify library when the row predates playlist linking.
+ */
+async function ensurePlaylistUri(current: WipArtist): Promise<string> {
+  if (current.playlistUri) {
+    return current.playlistUri;
+  }
+  console.log('No playlist linked in the sheet — looking for it in your Spotify library...');
+  const found = await findPlaylistForArtist(current.name);
+  if (!found) {
+    throw new Error(
+      `No playlist found for "${current.name}" (looked for "${current.name} - Chronological"). ` +
+        'Run "npm run start" to generate one.',
+    );
+  }
+  await setCurrentArtistPlaylist(found.uri, found.url);
+  console.log(`Linked existing playlist: ${found.url}`);
+  return found.uri;
+}
+
+function notify(title: string, message: string): void {
+  if (process.platform !== 'darwin') {
+    return;
+  }
+  try {
+    const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const scriptPath = path.join(os.tmpdir(), `music-rotater-notify-${Date.now()}.scpt`);
+    fs.writeFileSync(scriptPath, `display notification "${esc(message)}" with title "${esc(title)}"`);
+    execSync(`osascript ${JSON.stringify(scriptPath)}`, { stdio: 'ignore' });
+    fs.unlinkSync(scriptPath);
+  } catch {
+    // Notifications are best-effort; the console message is the real output.
+  }
+}
+
 program
   .command('start')
   .description('Start listening to a new random artist from the intake queue')
   .action(async () => {
     try {
-      console.log('Fetching a random artist from Google Sheets...');
-      const artist = await startArtist();
-      if (!artist) {
-        console.log('No artists left in the intake queue!');
-        return;
-      }
-      console.log(`Selected: ${artist.name} (${artist.genre || 'No genre'})`);
-      console.log(`Moved ${artist.name} to wip/done with today's start date.`);
-
-      console.log(`Generating chronological Spotify playlist for ${artist.name}...`);
-      const playlistUrl = await createPlaylistForArtist(artist.name);
-      console.log(`Success! Playlist created: ${playlistUrl}`);
+      await startFlow();
     } catch (error) {
       console.error('Error starting artist:', error);
       process.exitCode = 1;
@@ -45,6 +120,7 @@ program
       const artistName = await finishArtist();
       if (artistName) {
         console.log(`Successfully logged end date for: ${artistName}`);
+        clearRotationState();
       } else {
         console.log('No unfinished artists found in wip/done.');
       }
@@ -69,4 +145,242 @@ program
       process.exitCode = 1;
     }
   });
+
+program
+  .command('play')
+  .description("Start playback of the current artist's chronological playlist")
+  .option('-d, --device <id>', 'Spotify device id (defaults to the active device)')
+  .action(async (options: { device?: string }) => {
+    try {
+      const current = await getCurrentArtist();
+      if (!current) {
+        console.log('No unfinished artist in wip/done. Run "npm run start" first.');
+        return;
+      }
+      const uri = await ensurePlaylistUri(current);
+      const device = await playPlaylist(uri, options.device);
+      console.log(`Playing ${current.name} on ${device.name}.`);
+    } catch (error) {
+      console.error('Error starting playback:', error);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('status')
+  .description("Show where you are in the current artist's playlist")
+  .action(async () => {
+    try {
+      const current = await getCurrentArtist();
+      if (!current) {
+        console.log('No unfinished artist in wip/done.');
+        return;
+      }
+      const uri = await ensurePlaylistUri(current);
+      const tracks = await getPlaylistTracks(uri);
+      const np = await getNowPlaying();
+
+      console.log(`${current.name} — ${tracks.length} tracks in playlist (started ${current.startDate})`);
+
+      if (np && np.contextUri === uri && np.trackUri) {
+        const idx = tracks.findIndex((t) => t.uri === np.trackUri);
+        const position = idx >= 0 ? `track ${idx + 1} of ${tracks.length}` : 'track position unknown';
+        const state = np.isPlaying ? 'playing' : 'paused';
+        console.log(
+          `${position}: "${np.trackName}" — ${np.artists} ` +
+            `(${formatMs(np.progressMs)} / ${formatMs(np.durationMs)}, ${state} on ${np.deviceName})`,
+        );
+      } else if (np) {
+        console.log(
+          `Not playing the rotation playlist right now — currently ${np.isPlaying ? 'playing' : 'paused'}: ` +
+            `"${np.trackName}" — ${np.artists} on ${np.deviceName}.`,
+        );
+      } else {
+        console.log('Nothing is playing right now.');
+      }
+    } catch (error) {
+      console.error('Error getting status:', error);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('devices')
+  .description('List available Spotify Connect devices')
+  .action(async () => {
+    try {
+      const devices = await getDevices();
+      if (devices.length === 0) {
+        console.log('No Spotify devices found. Open Spotify on your phone or computer first.');
+        return;
+      }
+      for (const d of devices) {
+        console.log(`${d.isActive ? '* ' : '  '}${d.name} (${d.type}) — ${d.id}`);
+      }
+    } catch (error) {
+      console.error('Error listing devices:', error);
+      process.exitCode = 1;
+    }
+  });
+
+function deviceOption(cmd: Command): Command {
+  return cmd.option('-d, --device <id>', 'Spotify device id (defaults to the active device)');
+}
+
+deviceOption(program.command('next').description('Skip to the next track')).action(
+  async (options: { device?: string }) => {
+    try {
+      const device = await nextTrack(options.device);
+      const np = await getNowPlaying();
+      console.log(
+        np
+          ? `Skipped on ${device.name} — now: "${np.trackName}" — ${np.artists}.`
+          : `Skipped on ${device.name}.`,
+      );
+    } catch (error) {
+      console.error('Error skipping track:', error);
+      process.exitCode = 1;
+    }
+  },
+);
+
+deviceOption(program.command('prev').description('Go back to the previous track')).action(
+  async (options: { device?: string }) => {
+    try {
+      const device = await previousTrack(options.device);
+      const np = await getNowPlaying();
+      console.log(
+        np
+          ? `Went back on ${device.name} — now: "${np.trackName}" — ${np.artists}.`
+          : `Went back on ${device.name}.`,
+      );
+    } catch (error) {
+      console.error('Error going to previous track:', error);
+      process.exitCode = 1;
+    }
+  },
+);
+
+deviceOption(program.command('pause').description('Pause playback')).action(
+  async (options: { device?: string }) => {
+    try {
+      const device = await pausePlayback(options.device);
+      console.log(`Paused on ${device.name}.`);
+    } catch (error) {
+      console.error('Error pausing:', error);
+      process.exitCode = 1;
+    }
+  },
+);
+
+deviceOption(program.command('resume').description('Resume playback')).action(
+  async (options: { device?: string }) => {
+    try {
+      const device = await resumePlayback(options.device);
+      console.log(`Resumed on ${device.name}.`);
+    } catch (error) {
+      console.error('Error resuming:', error);
+      process.exitCode = 1;
+    }
+  },
+);
+
+program
+  .command('rollover')
+  .description('Finish the current artist and immediately start the next one')
+  .action(async () => {
+    try {
+      const done = await finishArtist();
+      if (done) {
+        console.log(`Finished ${done}.`);
+      } else {
+        console.log('No unfinished artist to finish — just starting the next one.');
+      }
+      clearRotationState();
+      await startFlow();
+    } catch (error) {
+      console.error('Error during rollover:', error);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('watch')
+  .description(
+    'Check whether the current rotation playlist is finished (meant to run on a schedule); ' +
+      'sends a macOS notification when it is',
+  )
+  .action(async () => {
+    try {
+      const current = await getCurrentArtist();
+      if (!current) {
+        console.log('No active rotation — nothing to watch.');
+        return;
+      }
+      const uri = await ensurePlaylistUri(current);
+      const tracks = await getPlaylistTracks(uri);
+      if (tracks.length === 0) {
+        console.log('Playlist is empty — nothing to watch.');
+        return;
+      }
+      const lastIndex = tracks.length - 1;
+
+      const np = await getNowPlaying();
+      const state = loadRotationState();
+      let finished = false;
+
+      if (np && np.contextUri === uri && np.trackUri) {
+        const idx = tracks.findIndex((t) => t.uri === np.trackUri);
+        saveRotationState({
+          playlistUri: uri,
+          lastTrackUri: np.trackUri,
+          lastTrackIndex: idx,
+          reportedFinishedFor: state?.reportedFinishedFor ?? null,
+          updatedAt: new Date().toISOString(),
+        });
+        // On the final track and no longer playing: the playlist ran dry.
+        if (idx === lastIndex && !np.isPlaying) {
+          finished = true;
+        } else {
+          const position = idx >= 0 ? `track ${idx + 1} of ${tracks.length}` : 'an untracked position';
+          console.log(
+            `Watching ${current.name}: ${position} ("${np.trackName}", ${np.isPlaying ? 'playing' : 'paused'}).`,
+          );
+        }
+      } else if (
+        (!np || !np.isPlaying) &&
+        state &&
+        state.playlistUri === uri &&
+        state.lastTrackIndex === lastIndex
+      ) {
+        // Playback stopped entirely since we last saw the final track.
+        finished = true;
+      } else if (np && np.contextUri !== uri) {
+        console.log(
+          `Watching ${current.name}: currently listening to something else ("${np.trackName}" — ${np.artists}).`,
+        );
+      } else {
+        console.log(`Watching ${current.name}: nothing playing right now.`);
+      }
+
+      if (finished && state?.reportedFinishedFor !== uri) {
+        const message =
+          `You finished ${current.name} — all ${tracks.length} tracks. ` +
+          'Run "npm run rollover" to close it out and roll the next artist.';
+        console.log(message);
+        notify('Music rotation', message);
+        saveRotationState({
+          playlistUri: uri,
+          lastTrackUri: state?.lastTrackUri ?? null,
+          lastTrackIndex: state?.lastTrackIndex ?? -1,
+          reportedFinishedFor: uri,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    } catch (error) {
+      console.error('Error watching rotation:', error);
+      process.exitCode = 1;
+    }
+  });
+
 program.parse();

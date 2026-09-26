@@ -97,6 +97,54 @@ npm run new "Artist Name" "Artist Genre"
 3. Otherwise, adds the artist and genre to the `intake` tab and re-sorts the queue lexicographically by artist name.
 4. **Output:** Confirms which artist was added, or reports that the artist already exists and where.
 
+## Playback Control (no Spotify app required)
+
+`start` now records the generated playlist's URI and URL in the **Notes** column of the
+`wip/done` row. Every command below resolves "the current artist" from that link, so you
+can drive the whole rotation from the terminal. (Rows created before this feature get their
+link backfilled automatically: the commands search your Spotify library for
+`"<Artist> - Chronological"` and write it into Notes.)
+
+> **One-time re-auth:** playback needs two new Spotify scopes
+> (`user-read-playback-state`, `user-modify-playback-state`). The next command you run will
+> detect the scope change and walk you through re-authorizing once.
+
+| Command | What it does |
+|---|---|
+| `npm run play` | Start the current artist's playlist on your active Spotify device (`-d <id>` to pick one) |
+| `npm run status` | Show where you are: track X of Y, title, timestamp, playing/paused, device |
+| `npm run devices` | List your Spotify Connect devices (the `*` marks the active one) |
+| `npm run next` / `npm run prev` | Skip forward / back one track |
+| `npm run pause` / `npm run resume` | Pause / resume playback |
+
+### Finish + start in one step
+
+```bash
+npm run rollover
+```
+
+Marks the current artist finished in the sheet and immediately rolls the next random artist:
+new playlist, new link, done.
+
+### Auto-finish watcher
+
+```bash
+npm run watch
+```
+
+A single-shot check designed to run on a schedule (cron / launchd, every 15–30 minutes).
+It looks at what's playing, and when the current playlist's final track has finished it
+prints a message and fires a macOS notification:
+
+> You finished Trivium — all 147 tracks. Run "npm run rollover" to close it out and roll the next artist.
+
+It keeps a tiny local state file (`.rotation_state.json`, gitignored) so it only notifies
+once per playlist. Example cron entry (runs every 20 minutes):
+
+```cron
+*/20 * * * * cd /path/to/music-rotater && npm run watch >> /tmp/music-rotater-watch.log 2>&1
+```
+
 ## Google Sheet Structure
 
 For the script to work correctly, your Google Sheet must have the following exact tab names and column structures:
