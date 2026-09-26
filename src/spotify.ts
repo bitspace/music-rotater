@@ -260,12 +260,15 @@ export interface PlaylistTrack {
 export async function getDevices(): Promise<DeviceInfo[]> {
   await authenticate();
   const res = await spotifyApi.getMyDevices();
-  return (res.body.devices ?? []).map((d) => ({
-    id: d.id ?? '',
-    name: d.name ?? 'unknown device',
-    isActive: d.is_active ?? false,
-    type: d.type ?? '',
-  }));
+  // Drop devices without an id — they can't be targeted by playback commands.
+  return (res.body.devices ?? [])
+    .filter((d) => d.id)
+    .map((d) => ({
+      id: d.id ?? '',
+      name: d.name ?? 'unknown device',
+      isActive: d.is_active ?? false,
+      type: d.type ?? '',
+    }));
 }
 
 /**

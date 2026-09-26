@@ -88,15 +88,31 @@ function notify(title: string, message: string): void {
   if (process.platform !== 'darwin') {
     return;
   }
+  const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const scriptPath = path.join(os.tmpdir(), `music-rotater-notify-${Date.now()}.scpt`);
   try {
-    const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    const scriptPath = path.join(os.tmpdir(), `music-rotater-notify-${Date.now()}.scpt`);
     fs.writeFileSync(scriptPath, `display notification "${esc(message)}" with title "${esc(title)}"`);
     execSync(`osascript ${JSON.stringify(scriptPath)}`, { stdio: 'ignore' });
-    fs.unlinkSync(scriptPath);
   } catch {
     // Notifications are best-effort; the console message is the real output.
+  } finally {
+    try {
+      fs.unlinkSync(scriptPath);
+    } catch {
+      // Already gone or never written — nothing to clean up.
+    }
   }
+}
+
+/**
+ * True when the final track of the playlist was actually played through —
+ * not merely paused. A manual pause mid-track must not count as "finished".
+ */
+function finalTrackPlayedThrough(progressMs: number, durationMs: number): boolean {
+  if (durationMs <= 0) {
+    return false;
+  }
+  return progressMs >= durationMs - 10_000;
 }
 
 program
@@ -331,15 +347,20 @@ program
 
       if (np && np.contextUri === uri && np.trackUri) {
         const idx = tracks.findIndex((t) => t.uri === np.trackUri);
+        const playedThrough =
+          idx === lastIndex && finalTrackPlayedThrough(np.progressMs, np.durationMs);
         saveRotationState({
           playlistUri: uri,
           lastTrackUri: np.trackUri,
           lastTrackIndex: idx,
+          lastProgressMs: np.progressMs,
+          lastDurationMs: np.durationMs,
           reportedFinishedFor: state?.reportedFinishedFor ?? null,
           updatedAt: new Date().toISOString(),
         });
-        // On the final track and no longer playing: the playlist ran dry.
-        if (idx === lastIndex && !np.isPlaying) {
+        // Final track played through to (near) the end and stopped: the playlist ran dry.
+        // A manual pause mid-track does not count — see finalTrackPlayedThrough.
+        if (playedThrough && !np.isPlaying) {
           finished = true;
         } else {
           const position = idx >= 0 ? `track ${idx + 1} of ${tracks.length}` : 'an untracked position';
@@ -351,9 +372,10 @@ program
         (!np || !np.isPlaying) &&
         state &&
         state.playlistUri === uri &&
-        state.lastTrackIndex === lastIndex
+        state.lastTrackIndex === lastIndex &&
+        finalTrackPlayedThrough(state.lastProgressMs ?? 0, state.lastDurationMs ?? 0)
       ) {
-        // Playback stopped entirely since we last saw the final track.
+        // Playback stopped entirely since we last saw the final track play through.
         finished = true;
       } else if (np && np.contextUri !== uri) {
         console.log(
@@ -373,6 +395,8 @@ program
           playlistUri: uri,
           lastTrackUri: state?.lastTrackUri ?? null,
           lastTrackIndex: state?.lastTrackIndex ?? -1,
+          lastProgressMs: state?.lastProgressMs ?? 0,
+          lastDurationMs: state?.lastDurationMs ?? 0,
           reportedFinishedFor: uri,
           updatedAt: new Date().toISOString(),
         });

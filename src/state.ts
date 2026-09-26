@@ -13,6 +13,10 @@ export interface RotationState {
   lastTrackUri: string | null;
   /** Index of the last-seen track within the playlist, or -1 when unknown. */
   lastTrackIndex: number;
+  /** Progress (ms) into the last-seen track; used to confirm it played through. */
+  lastProgressMs: number;
+  /** Duration (ms) of the last-seen track. */
+  lastDurationMs: number;
   /** Playlist URI we already reported as finished (so we only ping once). */
   reportedFinishedFor: string | null;
   updatedAt: string;
