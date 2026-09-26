@@ -70,8 +70,8 @@ Watcher:
    replaces the whole cell, so never stash anything else in Notes.
 2. `start`, `rollover`, and `finish` modify the Google Sheet and the Spotify library.
    Confirm with the user before running them unprompted. `--rebuild` additionally
-   retires (unfollows) the previous playlist from the Spotify library — the old
-   playlist is gone, so only use it deliberately.
+   retires the previous playlist (unfollowed, so removed from your Spotify library)
+   — use it deliberately.
 3. Playback commands act on the user's live Spotify session — they interrupt real
    listening. Confirm first unless the user asked for the action.
 4. On a Spotify 403, diagnose before re-authenticating: `Insufficient client scope`

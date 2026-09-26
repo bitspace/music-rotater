@@ -72,15 +72,16 @@ async function startFlow(options: { rebuild?: boolean } = {}): Promise<{ name: s
     }
     ({ url, uri } = await createPlaylistForArtist(artist.name));
     console.log(`Success! Playlist created: ${url}`);
-    if (existing) {
-      // Only retire the old playlist after the new one is built and about to
-      // be linked — a failed build must never strand the artist with nothing.
-      await retirePlaylist(existing.uri);
-      console.log(`Retired old playlist: ${existing.url}`);
-    }
   }
   await setCurrentArtistPlaylist(uri, url);
   console.log('Playlist linked in the wip/done Notes column.');
+  if (existing && options.rebuild) {
+    // Retire the old playlist only after the new one is built AND linked in
+    // the sheet — a failure anywhere above must never strand the artist with
+    // no working playlist.
+    await retirePlaylist(existing.uri);
+    console.log(`Retired old playlist: ${existing.url}`);
+  }
   clearRotationState();
   return { name: artist.name, url, uri };
 }
