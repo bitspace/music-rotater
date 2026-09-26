@@ -18,6 +18,9 @@ const spotifyApi = new SpotifyWebApi({
 const SCOPES = [
   'playlist-modify-public',
   'playlist-modify-private',
+  // Reading the user's (private) playlists: findPlaylistForArtist backfill,
+  // getPlaylistTracks on the private chronological playlists.
+  'playlist-read-private',
   // Playback control (play/status/next/pause/watch commands)
   'user-read-playback-state',
   'user-modify-playback-state',
