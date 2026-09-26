@@ -432,3 +432,16 @@ export async function findPlaylistForArtist(
   }
   return null;
 }
+
+/**
+ * Remove a playlist from the user's library. Takes a `spotify:playlist:<id>` URI.
+ */
+export async function retirePlaylist(playlistUri: string): Promise<void> {
+  await authenticate();
+  const match = /^spotify:playlist:([A-Za-z0-9]+)$/.exec(playlistUri);
+  const playlistId = match?.[1];
+  if (!playlistId) {
+    throw new Error(`Cannot parse playlist id from URI: ${playlistUri}`);
+  }
+  await spotifyApi.unfollowPlaylist(playlistId);
+}

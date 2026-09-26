@@ -37,11 +37,12 @@ Rotation:
   The safe first run: it never starts playback. Its only write is backfilling the
   playlist link into the Notes column when none is linked yet — and that write
   replaces the whole Notes cell, so treat the column as owned by the tool.
-- `npm run start` — pick a random artist from `intake`, move them to `wip`, and build
-  a new chronological playlist for them. It does not check for an existing playlist
-  first — starting an artist that already has one creates a duplicate.
-- `npm run rollover` — mark the current artist finished (`wip` → `done`) and start
-  the next rotation.
+- `npm run start [-- --rebuild]` — pick a random artist from `intake`, move them to
+  `wip`, and reuse their existing "<name> - Chronological" playlist when one is in
+  your library (otherwise build a new one). `--rebuild` forces a fresh build and
+  retires the old playlist from your library.
+- `npm run rollover [-- --rebuild]` — mark the current artist finished (`wip` → `done`)
+  and start the next rotation (same playlist reuse / `--rebuild` semantics as `start`).
 - `npm run finish` — legacy single step: finish the current artist
   (`rollover` does finish + start).
 - `npm run new "<artist>" "<genre>"` — add an artist to the `intake` queue
@@ -68,7 +69,9 @@ Watcher:
    the playlist into the Notes column when none is linked yet — and that write
    replaces the whole cell, so never stash anything else in Notes.
 2. `start`, `rollover`, and `finish` modify the Google Sheet and the Spotify library.
-   Confirm with the user before running them unprompted.
+   Confirm with the user before running them unprompted. `--rebuild` additionally
+   retires the previous playlist (unfollowed, so removed from your Spotify library)
+   — use it deliberately.
 3. Playback commands act on the user's live Spotify session — they interrupt real
    listening. Confirm first unless the user asked for the action.
 4. On a Spotify 403, diagnose before re-authenticating: `Insufficient client scope`
