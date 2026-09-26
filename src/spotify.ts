@@ -212,7 +212,7 @@ export async function createPlaylistForArtist(artistName: string): Promise<Gener
   console.log(`Adding ${allTrackUris.length} tracks to the playlist...`);
   for (let i = 0; i < allTrackUris.length; i += 100) {
     const batch = allTrackUris.slice(i, i + 100);
-    const response = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/items`, {
+    const response = await fetch(`https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/items`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${spotifyApi.getAccessToken()}`,
@@ -373,8 +373,9 @@ export async function getPlaylistTracks(playlistUri: string): Promise<PlaylistTr
     // into a bare 403 for Development Mode apps. /items is the replacement;
     // entry field renamed track -> item.
     // See: https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     const response = await fetch(
-      `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=${limit}&offset=${offset}`,
+      `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/items?${params}`,
       { headers: { Authorization: `Bearer ${spotifyApi.getAccessToken()}` } },
     );
     if (!response.ok) {
