@@ -34,13 +34,18 @@ The token is cached in `.spotify_token.json`.
 Rotation:
 
 - `npm run status` — current artist, playlist track count, now-playing position.
-  Read-only; the safe first run. Backfills the playlist link into the sheet's Notes
-  column when missing.
-- `npm run start` — pick a random artist from `intake`, build (or reuse) their
-  chronological playlist, move them to `wip`.
+  The safe first run: it never starts playback. Its only write is backfilling the
+  playlist link into the Notes column when none is linked yet — and that write
+  replaces the whole Notes cell, so treat the column as owned by the tool.
+- `npm run start` — pick a random artist from `intake`, move them to `wip`, and build
+  a new chronological playlist for them. It does not check for an existing playlist
+  first — starting an artist that already has one creates a duplicate.
 - `npm run rollover` — mark the current artist finished (`wip` → `done`) and start
   the next rotation.
-- `npm run finish` / `npm run new` — legacy single steps (finish current / pick new).
+- `npm run finish` — legacy single step: finish the current artist
+  (`rollover` does finish + start).
+- `npm run new "<artist>" "<genre>"` — add an artist to the `intake` queue
+  (inserted alphabetically, skips duplicates).
 
 Playback — all accept `--device "<name>"`; default is the active Spotify Connect device:
 
@@ -59,15 +64,17 @@ Watcher:
 
 ## Operating Rules
 
-1. `status` is the safe probe: read-only, never starts playback. It only writes the
-   playlist link back into the sheet when the Notes cell is empty.
+1. `status` is the safe probe: it never starts playback. Its only write is linking
+   the playlist into the Notes column when none is linked yet — and that write
+   replaces the whole cell, so never stash anything else in Notes.
 2. `start`, `rollover`, and `finish` modify the Google Sheet and the Spotify library.
    Confirm with the user before running them unprompted.
 3. Playback commands act on the user's live Spotify session — they interrupt real
    listening. Confirm first unless the user asked for the action.
 4. On a Spotify 403, diagnose before re-authenticating: `Insufficient client scope`
    means the scope list changed (delete `.spotify_token.json` and re-run); a bare
-   `Forbidden` on playlist reads is Spotify platform gating, not auth (see git log —
-   Feb 2026 `/tracks` → `/items` migration).
+   a bare `Forbidden` on playlist reads is Spotify platform gating, not auth — the
+   Feb 2026 migration renamed `GET /playlists/{id}/tracks` to `/playlists/{id}/items`
+   (https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide).
 5. `.env`, the Google credentials JSON, and `.spotify_token.json` are secrets: never
    print, log, or commit them.
