@@ -1,5 +1,6 @@
 .env*
 .spotify_token.json
+.rotation_state.json
 credentials.json
 .gemini/
 node_modules/
