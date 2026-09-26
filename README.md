@@ -105,8 +105,8 @@ can drive the whole rotation from the terminal. (Rows created before this featur
 link backfilled automatically: the commands search your Spotify library for
 `"<Artist> - Chronological"` and write it into Notes.)
 
-> **One-time re-auth:** playback needs two new Spotify scopes
-> (`user-read-playback-state`, `user-modify-playback-state`). The next command you run will
+> **One-time re-auth:** playback needs three new Spotify scopes
+> (`playlist-read-private`, `user-read-playback-state`, `user-modify-playback-state`). The next command you run will
 > detect the scope change and walk you through re-authorizing once.
 
 | Command | What it does |
